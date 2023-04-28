@@ -11,6 +11,7 @@ from multiprocessing import Pool
 from functools import partial
 from rouge_score import rouge_scorer
 from gpt3_api import make_requests as make_gpt3_requests
+import llama
 
 
 random.seed(42)
@@ -89,7 +90,7 @@ def parse_args():
     parser.add_argument(
         "--num_instructions_to_generate",
         type=int,
-        default=100,
+        default=5,
         help="th",
     )
     parser.add_argument(
@@ -155,7 +156,9 @@ if __name__ == "__main__":
     progress_bar = tqdm.tqdm(total=args.num_instructions_to_generate)
     if machine_instructions:
         progress_bar.update(len(machine_instructions))
-
+    MODEL = 'decapoda-research/llama-7b-hf'
+    tokenizer = llama.llama.LLaMATokenizer.from_pretrained(MODEL)
+    model = llama.llama.LLaMAForCausalLM.from_pretrained(MODEL)
     with open(os.path.join(args.batch_dir, "machine_generated_instructions.jsonl"), "a") as fout:
         while len(machine_instructions) < args.num_instructions_to_generate:
             batch_inputs = []
@@ -170,21 +173,40 @@ if __name__ == "__main__":
                 random.shuffle(prompt_instructions)
                 prompt = encode_prompt(prompt_instructions, classification=args.use_clf_seed_tasks_only)
                 batch_inputs.append(prompt)
-            results = make_gpt3_requests(
-                engine=args.engine,
-                prompts=batch_inputs,
-                max_tokens=1024,
-                temperature=0.7,
-                top_p=0.5,
-                frequency_penalty=0,
-                presence_penalty=2,
-                stop_sequences=["\n\n", "\n16", "16.", "16 ."],
-                logprobs=1,
-                n=1,
-                best_of=1,
-                api_key=args.api_key,
-                organization=args.organization,
-            )
+
+            results = []
+            for i, batch_input in enumerate(batch_inputs):
+                encoded = tokenizer(batch_input, return_tensors = "pt")
+                generated = model.generate(encoded["input_ids"], max_length = 200)[0]
+                decoded = tokenizer.batch_decode(generated)
+                print(decoded)
+                results.append(
+                        {
+                            "response":{
+                                "choices": [
+                                    {
+                                        "text": decoded,
+                                        "finish_reason": "stop",
+                                    }
+                                    ]
+                                },
+                        }
+                    )
+            # results = make_gpt3_requests(
+            #     engine=args.engine,
+            #     prompts=batch_inputs,
+            #     max_tokens=1024,
+            #     temperature=0.7,
+            #     top_p=0.5,
+            #     frequency_penalty=0,
+            #     presence_penalty=2,
+            #     stop_sequences=["\n\n", "\n16", "16.", "16 ."],
+            #     logprobs=1,
+            #     n=1,
+            #     best_of=1,
+            #     api_key=args.api_key,
+            #     organization=args.organization,
+            # )
             instructions = []
             all_metadata = []
             for result in results:
@@ -203,6 +225,9 @@ if __name__ == "__main__":
                 most_similar_instructions = {
                         all_instructions[i] : rouge_scores[i] for i in np.argsort(rouge_scores)[-10:][::-1]
                     }
+                print(inst)
+                print(machine_instructions)
+                print('-'*100)
                 machine_instructions.append(inst)
                 fout.write(json.dumps({
                     "instruction": inst,

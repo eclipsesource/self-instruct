@@ -8,6 +8,7 @@ import pandas as pd
 from collections import OrderedDict
 from gpt3_api import make_requests as make_gpt3_requests
 from templates.clf_task_template import template_1
+import llama
 
 
 random.seed(42)
@@ -83,6 +84,10 @@ if __name__ == '__main__':
         print(f"Loaded {len(existing_requests)} existing requests")
 
     progress_bar = tqdm.tqdm(total=len(lines))
+
+    MODEL = 'decapoda-research/llama-7b-hf'
+    tokenizer = llama.llama.LLaMATokenizer.from_pretrained(MODEL)
+    model = llama.llama.LLaMAForCausalLM.from_pretrained(MODEL)
     with open(output_path, "w") as fout:
         for batch_idx in range(0, len(lines), args.request_batch_size):
             batch = [json.loads(line) for line in lines[batch_idx: batch_idx + args.request_batch_size]]
@@ -98,20 +103,38 @@ if __name__ == '__main__':
                 # prefix = compose_prompt_prefix(human_written_tasks, batch[0]["instruction"], 8, 2)
                 prefix = templates[args.template]
                 prompts = [prefix + " " + d["instruction"].strip() + "\n" + "Is it classification?" for d in batch]
-                results = make_gpt3_requests(
-                    engine=args.engine,
-                    prompts=prompts,
-                    max_tokens=3,
-                    temperature=0,
-                    top_p=0,
-                    frequency_penalty=0,
-                    presence_penalty=0,
-                    stop_sequences=["\n", "Task"],
-                    logprobs=1,
-                    n=1,
-                    best_of=1,
-                    api_key=args.api_key,
-                    organization=args.organization)
+                results = []
+                for i, prompt in enumerate(prompts):
+                    encoded = tokenizer(prompt, return_tensors = "pt")
+                    generated = model.generate(encoded["input_ids"], max_length = 200)[0]
+                    decoded = tokenizer.batch_decode(generated)
+                    print(decoded)
+                    results.append(
+                            {
+                                "response":{
+                                    "choices": [
+                                        {
+                                            "text": decoded[-1],
+                                            "finish_reason": "stop",
+                                        }
+                                        ]
+                                    },
+                            }
+                    )
+                # results = make_gpt3_requests(
+                #     engine=args.engine,
+                #     prompts=prompts,
+                #     max_tokens=3,
+                #     temperature=0,
+                #     top_p=0,
+                #     frequency_penalty=0,
+                #     presence_penalty=0,
+                #     stop_sequences=["\n", "Task"],
+                #     logprobs=1,
+                #     n=1,
+                #     best_of=1,
+                #     api_key=args.api_key,
+                #     organization=args.organization)
                 for i in range(len(batch)):
                     data = batch[i]
                     if results[i]["response"] is not None:
